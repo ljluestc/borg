@@ -250,6 +250,11 @@ class SigIntManager:
 sig_int = SigIntManager()
 
 
+import signal
+import subprocess
+from ..platformflags import is_win32
+
+
 def ignore_sigint():
     """
     Ignore SIGINT, see also issue #6912.
@@ -261,6 +266,109 @@ def ignore_sigint():
     To avoid that: Popen(..., preexec_fn=ignore_sigint)
     """
     signal.signal(signal.SIGINT, signal.SIG_IGN)
+
+
+    import signal
+    import subprocess
+    import sys
+    import shlex
+    import os
+    from ..platformflags import is_win32
+
+
+    def ignore_sigint():
+        """
+        Ignore SIGINT, see also issue #6912.
+
+        Ctrl-C will send a SIGINT to both the main process (borg) and subprocesses
+        (e.g. ssh for remote ssh:// repos), but often we do not want the subprocess
+        getting killed (e.g. because it is still needed to shut down borg cleanly).
+
+        To avoid that: Popen(..., preexec_fn=ignore_sigint)
+        """
+        signal.signal(signal.SIGINT, signal.SIG_IGN)
+
+
+    def create_subprocess(args, **kwargs):
+        """
+        Create a subprocess with platform-specific SIGINT handling.
+
+        On Unix platforms, uses preexec_fn to ignore SIGINT in the child process.
+        On Windows, sets the CREATE_NEW_PROCESS_GROUP flag to create a process
+        group that doesn't receive Ctrl-C signals.
+
+        Args:
+            args: Command and arguments to run (list or string)
+            **kwargs: Additional arguments for subprocess.Popen
+
+        Returns:
+            subprocess.Popen object
+        """
+        if is_win32:
+            # On Windows, CREATE_NEW_PROCESS_GROUP flag prevents the process from receiving Ctrl+C signals
+            # This is equivalent to preexec_fn=ignore_sigint on Unix platforms
+            kwargs['creationflags'] = subprocess.CREATE_NEW_PROCESS_GROUP
+        else:
+            # On Unix platforms, use preexec_fn to ignore SIGINT
+            kwargs['preexec_fn'] = ignore_sigint
+
+        return subprocess.Popen(args, **kwargs)
+
+
+    def popen_with_error_handling(cmd, **kwargs):
+        """
+        Creates a subprocess with error handling and SIGINT protection.
+
+        Handles common error cases like command not found or bad syntax.
+        Provides platform-specific SIGINT handling via create_subprocess().
+
+        Args:
+            cmd: Command string or list of arguments
+            **kwargs: Additional arguments for subprocess.Popen
+
+        Returns:
+            subprocess.Popen object or None if there was an error
+        """
+        assert not kwargs.get('shell'), "Shell mode is not supported"
+
+        if isinstance(cmd, str):
+            try:
+                cmd_list = shlex.split(cmd)
+            except ValueError:
+                return None  # Bad syntax in command
+            if not cmd_list:
+                return None  # Empty command
+        else:
+            cmd_list = cmd
+
+        try:
+            return create_subprocess(cmd_list, **kwargs)
+        except FileNotFoundError:
+            return None  # Command not found
+    """
+    Create a subprocess with platform-specific SIGINT handling.
+
+    On Unix platforms, uses preexec_fn to ignore SIGINT in the child process.
+    On Windows, sets the appropriate flags to create a process group that doesn't
+    receive Ctrl-C signals.
+
+    Args:
+        args: Command and arguments to run
+        **kwargs: Additional arguments for subprocess.Popen
+
+    Returns:
+        subprocess.Popen object
+    """
+    from ..platformflags import is_win32
+
+    if is_win32:
+        # On Windows, CREATE_NEW_PROCESS_GROUP flag prevents the process from receiving Ctrl+C signals
+        kwargs['creationflags'] = subprocess.CREATE_NEW_PROCESS_GROUP
+    else:
+        # On Unix platforms, use preexec_fn to ignore SIGINT
+        kwargs['preexec_fn'] = ignore_sigint
+
+    return subprocess.Popen(args, **kwargs)
 
 
 def popen_with_error_handling(cmd_line: str, log_prefix="", **kwargs):
